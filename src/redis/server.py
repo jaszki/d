@@ -77,7 +77,13 @@ class Server(object):
         self._kv = {}
         return 0
 
-    def mget(self, )
+    def mget(self, keys):
+        # TODO how did the zip function come into this?
+        return [self._kv[k] for k in keys]
+
+    def mset(self, *kv):
+        for k, v in zip(kv[::2], kv[1::2]):
+            self._kv[k] = v
 
     def run(self):
         self._server.serve_forever()
