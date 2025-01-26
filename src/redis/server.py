@@ -1,48 +1,65 @@
+from collections import namedtuple
+from io import BytesIO
+from socket import error as socket_error
+import logging
+
 from gevent import socket
 from gevent.pool import Pool
 from gevent.server import StreamServer
 
-from collections import namedtuple
-from io import BytesIO
-from socket import error as socket_error
-
-
 class CommandError(Exception): pass
 class Disconnect(Exception): pass
 
+Error = namedtuple('Error', ('message',))
+
+# Setup the logger
+log = logging.getLogger(__name__)
+log.setLevel("DEBUG")
+streamHandler = logging.StreamHandler()
+log.addHandler(streamHandler)
+streamHandler.setFormatter(
+    logging.Formatter(
+        fmt="{asctime} - {levelname} - {message}",
+        style="{",
+        datefmt="%Y-%m-%d %H:%M",
+    )
+)
 
 class Server(object):
 
     def __init__(self, address="127.0.0.1", port=31337):
         self._pool = Pool(size=64)
         self._server = StreamServer(
-            listener = (
+            (
                 address,
                 port
             ),
-            handle = self.connection_handler,
+            self.connection_handler,
             spawn=self._pool
         )
         self._protocol = ProtocolHandler()
         self._kv = {}
         self._commands = self.get_commands()
 
-    def connection_handler(self, conn: socket.socket, address):
+    def connection_handler(self, conn, address):
         socket_file = conn.makefile('rwb')
+        log.info("connection received")
         while True:
             try:
                 data = self._protocol.handle_request(socket_file)
+                log.info("command decoded")
             except Disconnect as e:
+                log.exception("received disconnect")
                 break
 
             try:
                 resp = self.get_response(data)
+                log.info("response generated")
             except CommandError as e:
-                # TODO what do we do with error?
-                # SOme ideas: log it, print it
-                raise e
+                resp = Error(message=e.args[0])
             
             self._protocol.write_response(socket_file, resp)
+            log.info("written response")
 
     def get_response(self, data):
         # We assume that the data is either of:
@@ -52,13 +69,17 @@ class Server(object):
             try:
                 data.split()
             except:
-                raise CommandError("Invalid command")
-            
-        command = data[0]
+                raise CommandError("Request must be list or simple string")
+        
+        if not data:
+            raise CommandError("Missing command")
+        
+        command = data[0].upper()
+
         if command in self._commands:
             return self._commands[command](*data[1:])
         else:
-            raise CommandError("Command not found")
+            raise CommandError(f"Unrecognised command {command}")
 
     def get_commands(self):
         return {
@@ -84,16 +105,19 @@ class Server(object):
         return 0
 
     def flush(self):
-        self._kv = {}
-        return 0
+        kvlen = len(self._kv)
+        self._kv.clear()
+        return kvlen
 
     def mget(self, keys):
         # TODO how did the zip function come into this?
         return [self._kv[k] for k in keys]
 
     def mset(self, *kv):
-        for k, v in zip(kv[::2], kv[1::2]):
+        data = zip(kv[::2], kv[1::2])
+        for k, v in data:
             self._kv[k] = v
+        return len(data)
 
     def run(self):
         self._server.serve_forever()
@@ -115,33 +139,36 @@ class ProtocolHandler(object):
         first_byte = socket_file.read(1)
         if first_byte is None:
             raise Disconnect()
-        return self._handlers[first_byte](socket_file) 
+        try:
+            return self._handlers[first_byte](socket_file)
+        except KeyError:
+            raise CommandError("bad request")
 
-    def handle_simple_string(self, socket_file: BytesIO):
+    def handle_simple_string(self, socket_file):
         return socket_file.readline().rstrip('\r\n')
 
-    def handle_error(self, socket_file: BytesIO):
-        return socket_file.readline().rstrip('\r\n')
+    def handle_error(self, socket_file):
+        return Error(socket_file.readline().rstrip('\r\n'))
 
-    def handle_integer(self, socket_file: BytesIO):
+    def handle_integer(self, socket_file):
         return int(socket_file.readline().rstrip('\r\n'))
 
-    def handle_string(self, socket_file: BytesIO):
-        byte_count = int(socket_file.readline().split('\r\n'))
-        if byte_count > 0:
-            return socket_file.read(byte_count+2)[:-2]
+    def handle_string(self, socket_file):
+        # First read the length ($<length>\r\n).
+        length = int(socket_file.readline().rstrip('\r\n'))
+        if length == -1:
+            return None  # Special-case for NULLs.
+        length += 2  # Include the trailing \r\n in count.
+        return socket_file.read(length)[:-2]
     
     def handle_array(self, socket_file: BytesIO):
         num_elems = int(socket_file.readline().rstrip('\r\n'))
-        res = []
-        for i in range(num_elems):
-            res.append(self.handle_request(socket_file))
-        return res
+        return [self.handle_request(socket_file) for _ in range(num_elems)]
 
     def handle_dict(self, socket_file: BytesIO):
         num_keys = int(socket_file.readline().rstrip('\r\n'))
         res = {}
-        for i in range(num_keys):
+        for _ in range(num_keys):
             key = self.handle_request(socket_file)
             value = self.handle_request(socket_file)
             res[key] = value
@@ -149,25 +176,34 @@ class ProtocolHandler(object):
     
     def write_response(self, socket_file: BytesIO, data):
         buf = BytesIO()
+        self._write(buf, data)
+        buf.seek(0)
+        socket_file.write(buf.getvalue())
+        socket_file.flush()
 
     def _write(self, buf: BytesIO, data):
         if isinstance(data, str):
-            buf.write(f"+{str}\r\n")
-        elif isinstance(data, Exception):
-            buf.write(f"-{data}\r\n")
+            data = data.encode('utf-8')
+
+        if isinstance(data, bytes):
+            buf.write('$%s\r\n%s\r\n' % (len(data), data))
         elif isinstance(data, int):
-            buf.write(f":{int}\r\n")
-        elif isinstance(data, bytes):
-            buf.write(f"${len(data)}\r\n{[i + '\r\n' for i in data]}")
-        elif isinstance(data, list):
-            buf.write(f"*{len(data)}\r\n")
-            for i in data:
-                self._write(buf, i)
+            buf.write(':%s\r\n' % data)
+        elif isinstance(data, Error):
+            buf.write('-%s\r\n' % data.message)
+        elif isinstance(data, (list, tuple)):
+            buf.write('*%s\r\n' % len(data))
+            for item in data:
+                self._write(buf, item)
         elif isinstance(data, dict):
-            buf.write(f"%{len(data)}\r\n")
-            for k, v in dict:
-                self._write(buf, k)
-                self._write(buf, v)
+            buf.write('%%%s\r\n' % len(data))
+            for key in data:
+                self._write(buf, key)
+                self._write(buf, data[key])
+        elif data is None:
+            buf.write('$-1\r\n')
+        else:
+            raise CommandError('unrecognized type: %s' % type(data))
 
 
 class Client(object):
@@ -180,7 +216,7 @@ class Client(object):
     def execute(self, *args):
         self._protocol.write_response(self._fh, args)
         resp = self._protocol.handle_request(self._fh)
-        if isinstance(resp, Exception):
+        if isinstance(resp, Error):
             raise CommandError("Invalid response")
         return resp
     
