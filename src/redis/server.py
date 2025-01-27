@@ -46,6 +46,7 @@ class Server(object):
         log.info("connection received")
         while True:
             try:
+                log.info("trying to decode")
                 data = self._protocol.handle_request(socket_file)
                 log.info("command decoded")
             except Disconnect as e:
@@ -136,8 +137,8 @@ class ProtocolHandler(object):
         }
     
     def handle_request(self, socket_file: BytesIO):
-        first_byte = socket_file.read(1)
-        if first_byte is None:
+        first_byte = socket_file.read(1).decode("utf-8")
+        if not first_byte:
             raise Disconnect()
         try:
             return self._handlers[first_byte](socket_file)
@@ -145,28 +146,28 @@ class ProtocolHandler(object):
             raise CommandError("bad request")
 
     def handle_simple_string(self, socket_file):
-        return socket_file.readline().rstrip('\r\n')
+        return socket_file.readline().decode("utf-8").rstrip('\r\n')
 
     def handle_error(self, socket_file):
-        return Error(socket_file.readline().rstrip('\r\n'))
+        return Error(socket_file.readline().decode("utf-8").rstrip('\r\n'))
 
     def handle_integer(self, socket_file):
-        return int(socket_file.readline().rstrip('\r\n'))
+        return int(socket_file.readline().decode("utf-8").rstrip('\r\n'))
 
     def handle_string(self, socket_file):
         # First read the length ($<length>\r\n).
-        length = int(socket_file.readline().rstrip('\r\n'))
+        length = int(socket_file.readline().decode("utf-8").rstrip('\r\n'))
         if length == -1:
             return None  # Special-case for NULLs.
         length += 2  # Include the trailing \r\n in count.
-        return socket_file.read(length)[:-2]
+        return socket_file.read(length).decode("utf-8")[:-2]
     
     def handle_array(self, socket_file: BytesIO):
-        num_elems = int(socket_file.readline().rstrip('\r\n'))
+        num_elems = int(socket_file.readline().decode("utf-8").rstrip('\r\n'))
         return [self.handle_request(socket_file) for _ in range(num_elems)]
 
     def handle_dict(self, socket_file: BytesIO):
-        num_keys = int(socket_file.readline().rstrip('\r\n'))
+        num_keys = int(socket_file.readline().decode("utf-8").rstrip('\r\n'))
         res = {}
         for _ in range(num_keys):
             key = self.handle_request(socket_file)
@@ -181,27 +182,27 @@ class ProtocolHandler(object):
         socket_file.write(buf.getvalue())
         socket_file.flush()
 
-    def _write(self, buf: BytesIO, data):
+    def _write(self, buf, data):
         if isinstance(data, str):
             data = data.encode('utf-8')
-
         if isinstance(data, bytes):
-            buf.write('$%s\r\n%s\r\n' % (len(data), data))
+            buf.write(b'$%d\r\n%s\r\n' % (len(data), data))
         elif isinstance(data, int):
-            buf.write(':%s\r\n' % data)
+            buf.write(b':%d\r\n' % data)
         elif isinstance(data, Error):
-            buf.write('-%s\r\n' % data.message)
+            buf.write(b'-%s\r\n' % data.message)
         elif isinstance(data, (list, tuple)):
-            buf.write('*%s\r\n' % len(data))
+            to_write = b'*%d\r\n' % len(data)
+            buf.write(to_write)
             for item in data:
                 self._write(buf, item)
         elif isinstance(data, dict):
-            buf.write('%%%s\r\n' % len(data))
+            buf.write(b'%%%d\r\n' % len(data))
             for key in data:
                 self._write(buf, key)
                 self._write(buf, data[key])
         elif data is None:
-            buf.write('$-1\r\n')
+            buf.write(b'$-1\r\n')
         else:
             raise CommandError('unrecognized type: %s' % type(data))
 
