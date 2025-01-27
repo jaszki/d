@@ -1,9 +1,24 @@
+FILE = "testfile.txt"
 
-my_binary = b'%s' % bytes(2)
+with open(FILE, 'wb') as f:
+    # f.write(b'%d\r\n' % 2)
+    pass
 
-print(type(my_binary))
-print(my_binary)
+with open(FILE, 'rb') as f:
+    while True:
+        try:
+            data = f.read(1)
+            print(f"Expect binary, actual {type(data)}")
 
-my_int = int(my_binary)
-print(type(my_int))
-print(my_int)
+            print(f"read: {data}")
+            print(f"string: {data.decode("utf-8")}")
+            print(f"string stripped: {data.decode("utf-8").rstrip('\r\n')}")
+
+            nextline = f.read(1)
+            print(nextline)
+
+            nextline = f.read(1)
+            print(nextline)
+            print("FINISH")
+        except KeyError:
+            pass

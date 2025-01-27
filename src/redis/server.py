@@ -42,9 +42,11 @@ class Server(object):
         self._commands = self.get_commands()
 
     def connection_handler(self, conn, address):
+        print(conn.getblocking())
         socket_file = conn.makefile('rwb')
         log.info("connection received")
         while True:
+            log.info("in loop")
             try:
                 log.info("trying to decode")
                 data = self._protocol.handle_request(socket_file)
@@ -128,16 +130,19 @@ class ProtocolHandler(object):
 
     def __init__(self):
         self._handlers = {
-            '+': self.handle_simple_string,
-            '-': self.handle_error,
-            ':': self.handle_integer,
-            '$': self.handle_string,
-            '*': self.handle_array,
-            '%': self.handle_dict
+            b'+': self.handle_simple_string,
+            b'-': self.handle_error,
+            b':': self.handle_integer,
+            b'$': self.handle_string,
+            b'*': self.handle_array,
+            b'%': self.handle_dict
         }
     
     def handle_request(self, socket_file: BytesIO):
-        first_byte = socket_file.read(1).decode("utf-8")
+        log.info("BEFORE reading first byte")
+        first_byte = socket_file.read(1)
+        log.info('AFTER reading first byte')
+        log.info(f"First byte length = {len(first_byte)}")
         if not first_byte:
             raise Disconnect()
         try:

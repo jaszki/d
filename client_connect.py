@@ -4,5 +4,8 @@ from src.redis import server
 
 
 client = server.Client()
-sleep(10)
+
 print(client.set("key1", 2))
+
+
+sleep(10)
