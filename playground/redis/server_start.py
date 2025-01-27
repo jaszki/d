@@ -1,6 +1,6 @@
 from gevent import monkey;
 
-import src.redis.server as rdis
+import src.redis.simpledb as rdis
 
 monkey.patch_all()
 
