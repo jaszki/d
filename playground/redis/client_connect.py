@@ -1,9 +1,9 @@
 from time import sleep
 
-from src.redis import server
+from src.redis import simpledb
 
 
-client = server.Client()
+client = simpledb.Client()
 
 print(client.set("key1", 2))
 
