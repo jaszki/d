@@ -44,25 +44,19 @@ class Server(object):
     def connection_handler(self, conn, address):
         print(conn.getblocking())
         socket_file = conn.makefile('rwb')
-        log.info("connection received")
         while True:
-            log.info("in loop")
             try:
-                log.info("trying to decode")
                 data = self._protocol.handle_request(socket_file)
-                log.info("command decoded")
             except Disconnect as e:
                 log.exception("received disconnect")
                 break
 
             try:
                 resp = self.get_response(data)
-                log.info("response generated")
             except CommandError as e:
                 resp = Error(message=e.args[0])
             
             self._protocol.write_response(socket_file, resp)
-            log.info("written response")
 
     def get_response(self, data):
         # We assume that the data is either of:
@@ -139,10 +133,7 @@ class ProtocolHandler(object):
         }
     
     def handle_request(self, socket_file: BytesIO):
-        log.info("BEFORE reading first byte")
         first_byte = socket_file.read(1)
-        log.info('AFTER reading first byte')
-        log.info(f"First byte length = {len(first_byte)}")
         if not first_byte:
             raise Disconnect()
         try:
