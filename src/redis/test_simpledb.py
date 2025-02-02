@@ -14,6 +14,9 @@ class TestRedis(unittest.TestCase):
         self.client.flush()
         print("setup: finish")
     
+    def tearDown(self):
+        self.client._socket.close()
+
     def test_setting_getting(self):
         """Testing setting and getting values"""
         self.assertEqual(self.client.set("k1", 1), 1)
@@ -32,6 +35,6 @@ if __name__ == "__main__":
     server = simpledb.Server(address="127.0.0.1",port=31337)
     t = gevent.spawn(server.run)
     gevent.sleep()
-    print("start unittest")
     unittest.main()
-    print("end unittest")
+    # server._server.stop()
+    # t.join()
